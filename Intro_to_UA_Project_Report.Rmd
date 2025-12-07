@@ -1,0 +1,589 @@
+---
+title: "How Do People Adapt Their Travel Behavior to Extreme Heat?"
+subtitle: "CP 8883- Introduction to Urban Analytics- Project Report"
+author: "Rasmitha Reddy Mundla, Hajra Shahab, & Shambhavi Sinha"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    css: "styles.css"
+    self_contained: false
+    code_folding: hide
+---
+
+# Research Motivation & Background 
+
+Increase in daily temperature is affecting how we move, breathe and go around our daily lives. The effects of climate change are being discerned in different aspects of daily lives. These changes are happening now and are rapidly influencing different aspects of our daily lives. Extreme temperature and heat adversely affects public health and trigger climate change-related health risks that could lead to fatigue and heat stroke. 
+
+One way in which people respond to extreme heat is by changing their mobility-related decisions (Karner et al., 2015). If changes in temperature significantly disrupt travel behavior, it is essential to identify who is affected, in what ways, and whether certain socio-economic or demographic groups bear disproportionate burdens. We already know that lower-income neighborhoods bear a disproportionate burden of climate change Such insights can guide more equitable and climate-resilient transportation planning. The United States Environmental Protection Agency (EPA) reports that 40% more Black and African Americans are likely to currently live in areas with the highest projected increases in extreme temperature related deaths. This rises to 59% under 4°C of global warming (EPA, 2021). The effects of an increase in temperature vary depending on demographics and exposure risks: children, women, older adults and socioeconomically disadvantaged populations face the greatest consequences. Lower-income residents and people of color are disproportionately likely to walk or bicycle and are more vulnerable to ill health (Karner et al., 2015), however these are the individuals who are often segmented under "less likely to travel" category (Giuliano, 2003).
+
+
+<div style="text-align: center;">
+  <img src="climate_injustice.png" width="500">
+  <p><strong>Figure 2:</strong> Unequal Impacts of Climate Change on Daily Life</p>
+</div>
+
+In general, travelers respond to extreme weather events by reducing travel time, changing travel mode, staying indoors, and/ or rescheduling trips (Wu and Liao, 2020) (Figure 2). Research has shown that non-motorized modes such as walking and biking are most vulnerable to heat and an increased reliance can be observed on modes such taxis, private vehicles, or public transit as these modes are mostly air-conditioned or sheltered (Wei et al., 2019; Wu and Liao, 2020). People naturally avoid discomfort associated with heat exposure by switching to modes that offer greater climate control and less exposure to heat (e.g., taxis, TNCs). In cities like New York, extreme temperatures are linked to increases in trips related to app-hailed taxis, especially in higher-income areas (Gebresselassie et al., 2025). Other studies also confirm major behavioral shift during heatwaves and increased reliance on taxis and TNCs, on days when heat advisory is issued by the city (Gebresselassie et al., 2025). 
+
+<div style="text-align: center;">
+  <img src="adaptation_mechanism.png" width="600">
+  <p><strong>Figure 2:</strong> Adaptation Mechanisms to Extreme Heat</p>
+</div>
+
+In recent years, increasing frequency and intensity of extreme heat events have raised critical questions about their impact on urban mobility, particularly for vulnerable populations who rely more on public transportation than other groups. This study contributes to the discussion by analyzing how taxi and TNC usage in Chicago responds to extreme heat, considering different definitions of extreme heat: HI above 90°F, HI exceeding historical trends to reflect context-specific microclimate conditions, and (3) officially declared heat advisory days. We hypothesize that each definition captures a different severity of heat exposure and, therefore, elicits varying levels of sensitivity in trip-taking behavior. Temporal variation is explored across multiple dimensions: comparing usage before and after the COVID-19 pandemic (2019 vs. 2024) and analyzing intra-day shifts by the hour. The analysis distinguishes between taxis and TNCs to uncover any mode-specific behavioral responses to high heat exposure.  
+
+# Research Goals & Objectives
+
+Keeping these research goals in mind, we aim to explore the following questions:
+
+1. To what extent is “demand” affected as a response to each category of extreme heat?
+2. When do these changes occur?
+3. Where do these changes occur?
+4. Do these changes disproportionately affect different socio-economic and demographic groups?
+
+# Case Study Selection
+
+For this study, we selected the Chicago metropolitan area, one of the most populous regions in the United States and home to one of the world’s most extensive and complex multimodal transportation systems. Operated predominantly by the Chicago Transit Authority (CTA), Chicago’s network includes a massive fleet of yellow taxis, an extensive subway and elevated rail system, ride-hailing services, and one of the busiest bus networks.
+
+Chicago offers several advantages for examining travel behavior under extreme heat conditions. First, its diverse and interconnected transportation landscape provides a robust environment for analyzing travel patterns across multiple modes. Second, Chicago is one of only two U.S. cities where rideshare companies are required to publicly release ridership data. This policy uniquely enables us to integrate and compare usage patterns across both traditional taxi services and Transportation Network Companies (TNCs) such as Uber and Lyft.
+
+In addition to its transportation richness, Chicago’s socio-economic and demographic diversity makes it a compelling case study. The city exhibits substantial variation in income, race, neighborhood characteristics, and mobility needs, allowing us to explore how extreme heat may differentially impact travel behavior across populations and geographies. This heterogeneity supports our research goals and enables a more nuanced understanding of transportation equity under extreme heat.
+
+```{r, results = 'hide', message=FALSE, warning=FALSE}
+
+liby <- c("here", "arrow", "sqldf", "tidyverse", "dplyr", "gt", "openxlsx", "stringr", 
+          "tibble", "data.table", "tigris", "tidycensus", "sf", "rstudioapi", "matrixStats", 
+          "tmap", "leaflet", "RColorBrewer", "scales", "htmltools")
+
+# Load packages quietly
+lapply(liby, require, character.only = TRUE, quietly = TRUE, warn.conflicts = FALSE)
+
+census_api_key(Sys.getenv("CENSUS_API_KEY"))
+
+# Pull data from ACS
+acs_variables <- load_variables(year = 2023, dataset = "acs5", cache = TRUE)
+
+# Race/Ethnicity
+race_eth <- get_acs(
+  geography = "tract",
+  state = "IL",
+  county = c("031","043","097","197","111"),
+  variables = c("B03002_001", "B03002_012", "B03002_003", "B03002_004", "B03002_006"),
+  year = 2023,
+  survey = "acs5",
+  geometry = TRUE,
+  output = "wide"
+)
+
+race_eth <- race_eth %>%
+  mutate(
+    tot_indv = B03002_001E,
+    hisp = B03002_012E,
+    non_hisp_white = B03002_003E,
+    non_hisp_black = B03002_004E,
+    non_hisp_asian = B03002_006E,
+    non_hisp_other = tot_indv - (hisp + non_hisp_white + non_hisp_black + non_hisp_asian)
+  ) %>%
+  select(GEOID, NAME, tot_indv, hisp, non_hisp_white, non_hisp_black, non_hisp_asian, non_hisp_other, geometry)
+
+# Household income
+hh_inc <- get_acs(
+  geography = "tract",
+  state = "IL",
+  county = c("031","043","097","197","111"),
+  variables = c("B19013_001", "B11001_001"),
+  year = 2023,
+  survey = "acs5",
+  geometry = TRUE,
+  output = "wide"
+)
+
+hh_inc <- hh_inc %>%
+  mutate(
+    tot_hh = B11001_001E,
+    med_hh_inc = B19013_001E
+  ) %>%
+  select(GEOID, NAME, tot_hh, med_hh_inc, geometry)
+
+#--------------------------------------------------
+# Combine into single dataframes at tract level
+
+tract_df <- inner_join(as.data.frame(hh_inc), as.data.frame(race_eth), by = "GEOID") %>%
+  select(-NAME.x, -geometry.x) %>%
+  rename(NAME = NAME.y, geometry = geometry.y)
+
+# Drop CBGs and tracts with few households
+tract_df <- tract_df %>%
+  filter(tot_hh > 50)
+
+# Prep percentage columns
+tract_df$pct_hisp <- round(100 * (tract_df$hisp / tract_df$tot_indv), 1)
+tract_df$pct_non_hisp_white <- round(100 * (tract_df$non_hisp_white / tract_df$tot_indv), 1)
+tract_df$pct_non_hisp_black <- round(100 * (tract_df$non_hisp_black / tract_df$tot_indv), 1)
+tract_df$pct_non_hisp_asian <- round(100 * (tract_df$non_hisp_asian / tract_df$tot_indv), 1)
+tract_df$pct_non_hisp_other <- round(100 * (tract_df$non_hisp_other / tract_df$tot_indv), 1)
+
+#------------------------------------------------------------------------------
+##create a column for high/ mid/low racial groups
+
+acs_non_white_tract <- tract_df %>%
+  mutate(
+    nw_indv = hisp + non_hisp_black + non_hisp_asian + non_hisp_other,
+    pct_tot_non_white = pct_hisp + pct_non_hisp_black + pct_non_hisp_asian + pct_non_hisp_other,
+    pct25_nw = quantile(pct_tot_non_white, 0.25, na.rm = TRUE),
+    pct75_nw = quantile(pct_tot_non_white, 0.75, na.rm = TRUE),
+    nw_group = case_when(
+      pct_tot_non_white <= pct25_nw ~ "low_nw",
+      pct_tot_non_white <= pct75_nw ~ "mid_nw",
+      TRUE ~ "high_nw"
+    )
+  )
+#------------------------------------------------------------------------------
+##create a column for high/ mid/low income levels
+
+# Ensure med_hh_inc is numeric
+tract_df <- tract_df %>%
+  mutate(med_hh_inc = as.numeric(as.character(med_hh_inc)))
+
+# Calculate thresholds
+ami <- weightedMedian(tract_df$med_hh_inc, tract_df$tot_hh, na.rm = TRUE)
+low_inc_threshold <- 0.8 * ami
+high_inc_threshold <- 2 * ami
+
+# Create income_group
+acs_med_inc_tract <- tract_df %>%
+  mutate(
+    income_group = case_when(
+      med_hh_inc <= low_inc_threshold ~ "low_inc",
+      med_hh_inc >= high_inc_threshold ~ "high_inc",
+      med_hh_inc > low_inc_threshold & med_hh_inc < high_inc_threshold ~ "mid_inc",
+      TRUE ~ NA_character_  # explicit NA for any remaining NAs
+    )
+  )
+###########################################################################################################
+
+acs_tract_df <- acs_med_inc_tract %>%
+  left_join(
+    acs_non_white_tract[, c('GEOID', 'tot_hh', 'tot_indv', 'nw_indv', 'nw_group')],
+    by = "GEOID"
+  )
+
+# If geometry column exists but object is not sf
+acs_tract_sf <- st_as_sf(acs_tract_df)
+acs_tract_sf <- st_transform(acs_tract_sf, crs = 4326)
+```
+
+```{r}
+#Color palette
+acs_tract_sf$income_group <- factor(
+  acs_tract_sf$income_group,
+  levels = c("low_inc", "mid_inc", "high_inc")
+)
+
+acs_tract_sf$nw_group <- factor(
+  acs_tract_sf$nw_group,
+  levels = c("low_nw", "mid_nw", "high_nw")
+)
+
+pal_inc <- colorFactor(
+  palette = c("low_inc" = "#fdae61",
+              "mid_inc" = "#66c2a5", 
+              "high_inc" = "#fee08b"),
+  domain = acs_tract_sf$income_group
+)
+
+income_map <- leaflet(acs_tract_sf) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(
+    fillColor = ~pal_inc(income_group),
+    weight = 1,
+    color = "#ffffff",
+    fillOpacity = 0.7,
+    label = ~paste(
+      "Tract:", GEOID,
+      "\nIncome Group:", income_group,
+      "\nMedian Income: $", formatC(med_hh_inc, format = "d", big.mark = ",")
+    )
+  ) %>%
+  addLegend(
+    pal = pal_inc,
+    values = ~income_group,
+    title = "Income Category",
+    opacity = 0.7,
+    position = "bottomright",
+    labFormat = labelFormat(
+      transform = function(x) {
+        recode(
+          x,
+          "low_inc"  = "Low Income",
+          "mid_inc"  = "Middle Income",
+          "high_inc" = "High Income"
+        )
+      }
+    )
+  )
+
+
+#Color palette
+
+#Color palette for race categories 
+pal_race <- colorFactor(
+  palette = c("low_nw" = "#fee5d9",     # light pink
+              "mid_nw" = "#fcae91",     # medium coral
+              "high_nw" = "#de2d26"),   # deep red
+  domain = acs_tract_sf$nw_group
+)
+
+race_map <- leaflet(acs_tract_sf) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(
+    fillColor = ~pal_race(nw_group),
+    weight = 1,
+    color = "#ffffff",
+    fillOpacity = 0.7,
+    label = ~paste(
+      "Tract:", GEOID,
+      "\nNon-White Population Group:", nw_group,
+      "\nNon-White Individuals:", formatC(nw_indv, format = "d", big.mark = ",")
+    )
+  ) %>%
+  addLegend(
+    pal = pal_race,
+    values = ~nw_group,
+    title = "Non-White Population Category",
+    opacity = 0.7,
+    position = "bottomright",
+    labFormat = labelFormat(
+      transform = function(x) dplyr::recode(
+        x,
+        "low_nw" = "Low Non-White Share",
+        "mid_nw" = "Moderate Non-White Share",
+        "high_nw" = "High Non-White Share"
+      )
+    )
+  )
+
+# Render side by side using flexbox
+browsable(
+  tags$div(
+    style = "display: flex; justify-content: space-between;",
+    tags$div(style = "flex: 1; padding-right: 5px;", income_map),
+    tags$div(style = "flex: 1; padding-left: 5px;", race_map)
+  )
+)
+
+```
+
+# Methodology 
+
+<div style="text-align: center;">
+  <img src="flow_chart.jpg" width="2000">
+  <p><strong>Figure 3:</strong> Data Analysis Workflow</p>
+</div>
+
+This research uses multiple datasets to understand the effects of extreme heat in Chicago. They include taxi and TNC trip records From Chicago Data Portal, and heat index variables including temperature, humidity, and precipitation from ERA5, which is the fifth-generation European Center for Medium-Range Weather Forecasts (ECMWF) reanalysis for the global climate and weather. To explore variation in taxi and TNC usage patterns across socioeconomic groups, we used household income data from the American Community Survey (ACS) 2019-2023 5-year estimates. 
+
+## Weather Data 
+The ERA5 dataset provides information on climate variables, including hourly temperature, total precipitation, and humidity from 1970 onwards. This data was used to derive the heat index from climate variables using the weathermetrics package in R for both 2019 and 2024 at the daily and hourly level from May- September. Once these heat indexes were calculated, we identified different thresholds to better understand extreme and dangerous heat levels. As per the National Weather Service (NWS), a heat index between 80°F and 90°F could result in fatigue under prolonged exposure and a heat index between 90-105°F falls under the extreme caution category, possibly resulting in heat disorders such as sunstroke and heat exhaustion. Using these definitions, we described `Hot` as days when the heat index is equal to or greater than the historical 90th percentile (to better understand local climate with historical trends) and the heat index is greater than or equal to 86°F; `Very Hot Days` as days when the maximum heat index is greater than or equal to 90°F. Lastly, `Extremely Hot Days` includes days when the heat index is greater than or equal to 100°F, which falls under heat advisory and heat warning categories (Figure 4). 
+ 
+The ERA5 dataset was also used to calculate precipitation to identify heavy rain days that may alter regular travel decisions on a given day. During the data exploratory phase, we noticed an unusual decrease in the overall number of trips on certain days with no particular association with the heat index. Upon further investigation, we found these days to have received precipitation at different times of the day or throughout. One of the key decisions made during this phase was to identify a heavy precipitation day from a regular rainy day. A heavy precipitation event is defined as days where the total amount of precipitation is in the top 1 percent of all precipitation days during the 1958-2022 reference period. Based on this definition, each day’s total daily precipitation was calculated for Chicago, and days in the top 1 percent category for each year were marked as rainy days, which were later dropped from model estimations. 
+
+<div style="text-align: center;">
+  <img src="heat_index.png" width="600">
+  <p><strong>Figure 4:</strong> Heat Index Thresholds</p>
+</div>
+
+## Trip Data 
+
+The Chicago Open Data Portal publishes trip record data for various services, including yellow taxis and TNCs. These trip records provide date, time, pickup, and drop-off census tracts, trip distance, and fare. The date and time columns provide the date and timestamp of when a trip was undertaken. This data on the website rests in a different timezone; therefore, we converted it to EST zone (America/ New York) for this analysis, as heat index data was also retrieved for the same time zone. 
+
+For yellow taxis and TNCs, the trip records were cleaned to prepare the data for analysis. Some holidays that occurred within the selected study period in Chicago were removed from analysis, as they are expected to generate unusual demand for taxi/TNC usage at certain locations. These events include the Memorial Day, Juneteenth, Independence Day, and Labor Day. Furthermore, weekend trips, i.e. Saturday and Sunday, were also removed from the analysis as weekend travel patterns tend to differ from those on regular weekdays.  
+
+## Socio-economic and Demographic Data
+
+To understand how people make travel decisions on extremely hot days, we looked at different spatial demographics and socio-economic patterns across the City that could influence these decisions. The analysis used ACS 5-year summary from 2019-2023 data to look at median household income and racial and ethnic background. The ACS data was filtered to only return census tracts with at least 50 housing units. 
+
+Using ACS summary data, the Area Median Income (AMI) for Chicago was calculated using household-weighted median household income across all tracts. Income categories were then defined by setting the low-income threshold at 80% of AMI and the high-income threshold at 200% of AMI. For racial analysis, we defined categories by calculating the share of residents who identify as Non-White (Hispanic or any Non-Hispanic race other than White).
+Tracts were then grouped into racial composition categories using percentile:
+Tracts were then grouped into racial composition categories using percentiles:
+
+- **Low Non-White tracts:** Less than or equal to the 25th percentile.
+- **Medium Non-White tracts:** Between the 25th and 75th percentiles.
+- **High Non-White tracts:** Greater than or equal to the 75th percentile.
+
+## Analysis 
+
+We set out to understand the effects of extreme heat on travel behavior—specifically, taxi/TNC usage on hot days—and to analyze how that usage varies over time, by mode availability, and across neighborhoods defined by different socio‑economic and demographic characteristics. As discussed earlier, there were three different thresholds considered to define hot days. These days were selected after filtering weekends and rainy days from the weather dataset. For each hot day, we examined the heat index on the same day in the preceding and following weeks (Figure 5), which were considered as control days in the statistical analysis. If the heat index of the day selected in the prior week or week after fell under one of the hot day categories, then these days were removed from the set of days defined as control. Figure 6 shows the final number of different hot (`Hot`, `Very Hot Day`, and `Extremely Hot Day`) and control days selected from each year.
+
+<div style="text-align: center;">
+  <img src="hot_control_day.png" width="600">
+  <p><strong>Figure 5:</strong> Identifying Hot and Control Days</p>
+</div>
+
+<div style="text-align: center;">
+  <img src="hot_control_day_count.png" width="600">
+  <p><strong>Figure 6:</strong> Count of Hot and Control Days in Different Categories</p>
+</div>
+
+# Exploratory Data Analysis 
+
+## 1. More Trips Being Taken
+
+The average number of trips for yellow taxis and TNCs shows a similar trend for all three definitions of hot days across all three years (Figure 7). On hot days (regardless of the category), we see that there is an increase in the average number of trips taken via yellow taxi/TNCs. Between yellow taxis and TNCs, we observe that TNCs experience a greater increase in the average number of trips taken on hot days as compared to control days, especially in 2024. This is an expected result, as it is much easier and more convenient to request a TNC trip while staying indoors on a hot day than to step outside and hail a yellow taxi on the street. 
+
+```{r, results='hide', message = FALSE, warning = FALSE}
+#hourly plot processing 
+df_daily <- read.csv(here("Processed Data", "df_daily_hot_control.csv"))
+#---------------------------------------------------
+### Create daily summary plots
+
+df_daily_summary <- sqldf('
+    SELECT 
+        mode,
+        year,
+        day_type,
+        category_type,
+        SUM(total_dist) / SUM(num_trips_all) AS avg_dist,
+        AVG(num_trips_all) AS avg_trips
+    FROM df_daily
+    GROUP BY 
+        mode, year, day_type, category_type;
+')
+
+df_daily_summary$year_fac <- factor(df_daily_summary$year, levels = c(2019, 2024))
+df_daily_summary$day_type_fac <- factor(df_daily_summary$day_type, levels = c('hot', 'control'), labels = c('Hot Days', 'Control Days'))
+df_daily_summary$mode_fac <- factor(df_daily_summary$mode, levels = c('Taxi', 'TNC'), labels = c('Yellow Taxi', 'TNC'))
+df_daily_summary$hot_day_def_fac <- factor(df_daily_summary$category_type, levels = c(2, 1, 3), labels = c('HI > HI_hist & HI >= 86F', 'HI >= 90F', 'HI >= 100F'))
+
+#----------------------------------------------------
+###########################################################################################################
+```
+
+```{r, results='hide', message = FALSE, warning = FALSE}
+
+# Plot average number of trips
+
+daily_taxi <- ggplot(data = df_daily_summary, aes(x = year_fac, y = avg_trips / 1000, fill = day_type_fac)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(x = year_fac, y = avg_trips / 1000, label = round(avg_trips / 1000, 1)),
+            position = position_dodge(width = 1),
+            vjust = 2, size = 4, color = "black", fontface = "bold") +
+  theme(text = element_text(size = 32), axis.text.x = element_text(size = 28), axis.text.y = element_text(size = 20),
+        legend.position = "top", legend.title=element_blank()) +
+  xlab("") +
+  ylab("Average number of trips (000's)\n") +
+  scale_alpha_manual(values = c(0.8, 1.0)) +
+  scale_fill_manual(values = c("#ca0020", "#bababa")) +
+  facet_grid(mode_fac ~ hot_day_def_fac, scales = "free_y")
+
+#----------------------------------------------------
+
+# Plot average trip distance (miles)
+
+daily_tnc <- ggplot(data = df_daily_summary, aes(x = year_fac, y = avg_dist, fill = day_type_fac)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(x = year_fac, y = avg_dist, label = round(avg_dist, 2)),
+            position = position_dodge(width = 1),
+            vjust = 2, size = 4, color = "black", fontface = "bold") +
+  theme(text = element_text(size = 32), axis.text.x = element_text(size = 28), axis.text.y = element_text(size = 20),
+        legend.position = "top", legend.title=element_blank()) +
+  xlab("") +
+  ylab("Average trip distance (miles)\n") +
+  scale_alpha_manual(values = c(0.8, 1.0)) +
+  scale_fill_manual(values = c("#ca0020", "#bababa")) +
+  facet_grid(mode_fac ~ hot_day_def_fac, scales = "free_y")
+
+```
+
+<div style="text-align: center;">
+  <img src="moretripsbeingtaken.png" width="600">
+  <p><strong>Figure 7:</strong> More Trips Being Taken</p>
+</div>
+
+```{r, results='hide', message = FALSE, warning = FALSE}
+#hourly plot processing 
+df_hourly <- read.csv(here("Processed Data", "df_hourly.csv"))
+
+#---------------------------------------------------
+#Prepare dataframe for plots 
+
+df_hourly_hi_summary <- sqldf('SELECT mode, year, start_hour, day_type, category_type,
+                          AVG(num_trips_all) AS avg_trips
+                          FROM df_hourly
+                          GROUP BY mode, year, start_hour, day_type, category_type;')
+
+df_hourly_hi_summary <- df_hourly_hi_summary %>% drop_na()
+df_hourly_hi_summary$year_fac <- factor(df_hourly_hi_summary$year, levels = c(2019, 2024))
+df_hourly_hi_summary$day_type_fac <- factor(df_hourly_hi_summary$day_type, levels = c('hot', 'control'), labels = c('Hot Days', 'Control Days'))
+df_hourly_hi_summary$mode_fac <- factor(df_hourly_hi_summary$mode, levels = c('Taxi', 'TNC'), labels = c('Yellow Taxi', 'TNC')) 
+df_hourly_hi_summary$category_type_fac <- factor(df_hourly_hi_summary$category_type, levels = c(1, 2, 3), labels = c('HI > HI_hist & HI >= 86F', 'HI >= 90F', 'HI >= 100F'))
+
+###########################################################################################################
+```
+
+```{r, results='hide', message = FALSE, warning = FALSE}
+
+# Plot average number of trips (Taxi) - hourly 
+taxi_plot <- ggplot(data = df_hourly_hi_summary[df_hourly_hi_summary$mode == 'Taxi',],
+                    aes(x = start_hour, y = avg_trips/1000, color = day_type_fac)) +
+  geom_line(linewidth = 1.25) +
+  theme(text = element_text(size = 32),
+        axis.text.x = element_text(size = 28),
+        axis.text.y = element_text(size = 20),
+        legend.position = "top") +
+  scale_color_manual(values = c("#ca0020", "#bababa"), name = "Yellow Taxi") +
+  xlab("Start Hour") +
+  ylab("Average number of trips (000's)\n") +
+  facet_grid(year_fac ~ category_type_fac, scales = "free_y")
+
+
+# Plot average number of trips (TNC) hourly 
+tnc_plot <- ggplot(data = df_hourly_hi_summary[df_hourly_hi_summary$mode == 'TNC',],
+                   aes(x = start_hour, y = avg_trips/1000, color = day_type_fac)) +
+  geom_line(linewidth = 1.25) +
+  theme(text = element_text(size = 32),
+        axis.text.x = element_text(size = 28),
+        axis.text.y = element_text(size = 20),
+        legend.position = "top") +
+  scale_color_manual(values = c("#ca0020", "#bababa"), name = "TNC") +
+  xlab("Start Hour") +
+  ylab("Average number of trips (000's)\n") +
+  facet_grid(year_fac ~ category_type_fac, scales = "free_y")
+
+```
+  
+## 2. Shorter Trips Being Taken: 
+
+We set out to test our hypothesis that shorter walk and bike trips are being switched to taxi/TNC trips on hot days and as it gets hotter during the day. Figure 8 shows how trip distances for both years and modes. As mentioned earlier, these results are more pronounced for TNCs, the `Extremely Hot` category. 
+
+<div style="text-align: center;">
+  <img src="shortertripsbeingtaken.png" width="600">
+  <p><strong>Figure 8:</strong> Shorter Trips Being Taken</p>
+</div>
+
+## 3. When are They Being Taken: 
+
+As we zoom into the effects, we get more insights into the hourly trip distribution as the heat index changes within a hot day vs. a control day. We see little to no difference in the average number of yellow taxi trips between hot and control days when the day starts. However, as the day progresses, we observe the difference to increase, especially during 10 am- 7 pm, with some of the biggest differences in afternoon peaks observed in early mornings when the day begins. However, as the day progresses, the gap becomes more profound and peaks during the hottest time of the day in the afternoon between 3 pm -7 pm. 
+
+The trends for TNCs follow the same direction as well, but they are a lot more significant than what we observed for yellow taxis. While the overall average number of trips is much higher for TNCs than for yellow taxis, we also observe a much larger difference between average trip counts between hot and control days for TNCs as compared to yellow taxis, especially between 3 pm- 7 pm in 2019 as well as 2024. 
+
+<table style="margin-left:auto; margin-right:auto;">
+  <tr>
+    <td style="text-align: center;">
+      <img src="when_taxi.png" width="600"><br>
+      <strong>Figure 9a:</strong> When are They Being Taken (Yellow Taxi)
+    </td>
+    <td style="text-align: center;">
+      <img src="when_tnc.png" width="600"><br>
+      <strong>Figure 9b:</strong> When are They Being Taken (TNC)
+    </td>
+  </tr>
+</table>
+
+</div>
+
+# Results 
+
+```{r, results='hide', message = FALSE, warning = FALSE}
+
+# Load required libraries
+library(dplyr)
+library(here)
+library(plm)
+library(DT)  
+
+#heat index & trip data------------------------------------------------
+# Hot day definitions - (1) HI > HI_hist (90th percentile) and HI >= 86 ; (2) HI >= 90 ; (3) HI >= 100
+hot_day_def_list <- read.csv(here("Processed Data", "sample_days", "hot_control_days_clean.csv"))
+#----------------------------------------------------
+
+### Read trip data (hourly - pickup zone resolution)
+#Taxi------------------------------------
+hourly_taxi_2019 <- read.csv(here("Processed Data", "yellow_taxi", "df_hourly_chicago_taxi_by_tract_2019.csv")) %>%
+  mutate(start_date = as.POSIXct(start_date, format = "%d/%m/%Y")) %>%
+  select(start_date, start_hour, pickup_census_tract, num_trips_all)
+
+hourly_taxi_2024 <- read.csv(here("Processed Data", "yellow_taxi", "df_hourly_chicago_taxi_by_tract_2024.csv")) %>%
+  mutate(start_date = as.POSIXct(start_date, format = "%d/%m/%Y")) %>%
+  select(start_date, start_hour, pickup_census_tract, num_trips_all)
+
+#TNC------------------------------------
+hourly_tnc_2019 <- read.csv(here("Processed Data", "tnc", "tnc_trips_2019.csv")) %>%
+  select(start_date, start_hour, pickup_census_tract, num_trips_all)
+
+hourly_tnc_2024 <- read.csv(here("Processed Data", "tnc", "tnc_trips_2024.csv")) %>%
+  select(start_date, start_hour, pickup_census_tract, num_trips_all)
+
+#load census block group ---------------------------------------
+acs_tract_df <- read.csv(here("Processed Data", "acs", "acs_tract_df.csv"))
+
+#prepare dataset for modeling-------------------------------------
+hot_day_def_list$start_date <- as.Date(hot_day_def_list$date)
+hourly_tnc_2019$start_date <- as.Date(hourly_tnc_2019$start_date)
+
+df_hourly_pu_tract_hi <- hot_day_def_list %>%
+  left_join(hourly_tnc_2019, by = "start_date") %>%
+  filter(start_date >= as.Date("2019-05-01"),
+         start_date <= as.Date("2024-09-30")) %>%
+  drop_na()
+
+df_hourly_pu_tract <- left_join(
+  acs_tract_df,
+  df_hourly_pu_tract_hi,
+  by = c("GEOID" = "pickup_census_tract")
+) %>%
+  mutate(start_date = as.Date(start_date)) %>%
+  select(start_date, year, start_hour, GEOID, day_type, category_type, tot_hh, tot_indv, nw_indv, race_cat, inc_cat, num_trips_all) %>%
+  drop_na()
+
+df_daily <- sqldf('
+  SELECT GEOID, start_date, start_hour, year, day_type, category_type,
+         race_cat, inc_cat,
+         SUM(num_trips_all) AS num_trips_all
+  FROM df_hourly_pu_tract
+  GROUP BY start_date, start_hour, year, day_type, category_type,
+           race_cat, inc_cat
+')
+
+df_daily$hot_day_binary <- ifelse(df_daily$day_type == 'hot', 1, 0)
+###########################################################################################################
+
+df_mod_def1_2019<- df_daily[
+  df_daily$category_type == 1 & df_daily$year == 2019 &
+    df_daily$start_hour %in% 8:19,]
+
+df_mod_def1_2019$race_cat <- factor(df_mod_def1_2019$race_cat, ordered = FALSE)
+df_mod_def1_2019$inc_cat <- factor(df_mod_def1_2019$inc_cat, ordered = FALSE)
+#df_mod_def1_2024$race_cat <- relevel(df_mod_def1_2024$race_cat, ref = "low_nw")   # example
+#df_mod_def1_2024$inc_cat <- relevel(df_mod_def1_2024$inc_cat, ref = "low_inc")  # example
+
+
+pdata <- pdata.frame(df_mod_def1_2019, index = c("GEOID", "start_hour"))
+
+# Fixed-effects model (within-tract)
+model_hot_day <- plm(
+  num_trips_all ~ hot_day_binary + hot_day_binary:inc_cat + hot_day_binary:race_cat,
+  data = pdata,
+  model = "within"
+)
+
+summary(model_hot_day)
+
+```
+
+# Discussion & Conclusion 
+
+
+# References 
+
+1. Karner, A., Hondula, D.M., Vanos, J.K., 2015. Heat exposure during non-motorized travel: Implications for transportation policy under climate change. J Transp Health 2, 451–459. https://doi.org/10.1016/j.jth.2015.10.001
+
+2. Environmental Protection Agency. 2021. “EPA Report Shows Disproportionate Impacts of Climate Change on Socially Vulnerable Populations in the United States.” News release, September 2, 2021. https://www.epa.gov/newsreleases/epa-report-shows-disproportionate-impacts-climate-change-socially-vulnerable
+
+3. Wei, M., Liu, Y., Sigler, T., Liu, X., Corcoran, J., 2019. The influence of weather conditions on adult transit ridership in the sub-tropics. Transp Res Part A Policy Pract 125, 106–118. https://doi.org/10.1016/j.tra.2019.05.003
+
+4. Wu, J., Liao, H., 2020. Weather, travel mode choice, and impacts on subway ridership in Beijing. Transp Res Part A Policy Pract 135, 264–279. https://doi.org/10.1016/j.tra.2020.03.020
+
+5. Gebresselassie, M., Michalek, J., Nock, D., Harper, C., 2025. Analyzing disparities in app-hailed travel during extreme heat in New York City. Transp Res D Transp Environ 142, 104650. https://doi.org/10.1016/j.trd.2025.104650
+
+6. Genevieve Giuliano, Travel, location and race/ethnicity, Transportation Research Part A: Policy and Practice, Volume 37, Issue 4, 2003, Pages 351-372, ISSN 0965-8564, https://doi.org/10.1016/S0965-8564(02)00020-4
+
